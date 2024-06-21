@@ -1,0 +1,1000 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+# Enrichment analysis for breast cancer
+
+
+# Loading required libraries
+```{r message=FALSE}
+library(DESeq2)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(pathview)
+library(biomaRt)
+library(ReactomePA)
+library(ggplot2)
+library(RColorBrewer)
+library(ggsci)
+```
+
+# Read count matrix into CSV
+```{r}
+read_count_data <- function(file_path){
+  counts_data <- read.csv(file_path, row.names = 1)
+  expression_data <- round(counts_data)
+  return(expression_data)
+}
+
+expression_matrix <- read_count_data("../Enrichment analysis for breast cancer/Data/GSE183947_fpkm.csv")
+
+head(expression_matrix,2)
+```
+# Read metadata into CSV 
+```{r}
+
+read_metadata <- function(file_path){
+  coldata <- read.csv(file_path, row.names = 1)
+  return (coldata)
+}
+
+meta_data <- read_metadata("../Enrichment analysis for breast cancer/Data/metadata.csv")
+head(meta_data)
+
+```
+
+## Convert condition column in metadata to factor
+```{r}
+meta_data$condition <- as.factor(meta_data$condition)
+meta_data$description <- as.factor(meta_data$description)
+```
+
+## Make sure the row names in metadata matches to the column names in expression matrix
+```{r}
+all(rownames(meta_data) %in% colnames(expression_matrix))
+```
+
+## Match the row names in metadata to the column names in expression matrix
+```{r}
+rownames(meta_data) = colnames(expression_matrix)
+```
+
+
+# Construct a DESeqDataSet.
+```{r}
+deseqdataset <- function(){
+  deseqdataset <- DESeqDataSetFromMatrix(countData = expression_matrix, 
+                                         colData = meta_data, 
+                                         design = ~ condition)
+  
+  return(deseqdataset)
+}
+
+deseqdataset_object <- deseqdataset()
+deseqdataset_object
+```
+
+# Pre-filtering: removing rows with low gene counts
+## keep rows that have at least 10 reads total
+
+```{r}
+
+pre_filter <- function(){
+  keep <- rowSums(counts(deseqdataset_object)) >= 10
+  deseqdataset <- deseqdataset_object[keep,]
+  return (deseqdataset)
+}
+
+filtered_expression_counts <- pre_filter()
+head(filtered_expression_counts)
+
+```
+
+# Differential expression analysis
+```{r}
+diff_expr_analysis <- function(){
+  deseq_analysis <- DESeq(deseqdataset_object)
+  result <- results(deseq_analysis)
+  return (result)
+}
+
+deseq_result <- diff_expr_analysis()
+deseq_result
+```
+
+
+# Convert DESeq result into DataFrame
+```{r}
+df_deseq_result <- as.data.frame(deseq_result)
+```
+
+
+# Extract differentially expressed genes that have padj <= 0.01 
+```{r}
+
+sig_genes <- function(){
+significant_genes <- df_deseq_result[df_deseq_result$padj <= 0.01,] %>% na.omit(significant_genes)
+ordered_sig_genes <- significant_genes[order(significant_genes$padj, decreasing = FALSE), ]
+return(ordered_sig_genes)
+}
+
+sign_genes <- sig_genes()
+head(sign_genes)
+
+```
+
+# Write significant genes into CSV file
+
+```{r}
+write_sig_genes <- function(out_path){
+  write.csv(sign_genes, file = out_path )
+}
+
+write_sig_genes("../Enrichment analysis for breast cancer/outputs/significant_genes.csv")
+
+```
+
+
+# Convert Gene SYMBOLs to ENTREZ IDs
+```{r}
+entrez_ids <- function(){
+# copy the rownames of significant genes and store it in gene_names
+gene_names <- rownames(sign_genes)
+# convert gene names into ENTREZID
+entrez_ids <- mapIds(org.Hs.eg.db, 
+                     keys = gene_names, 
+                     column = "ENTREZID", 
+                     keytype = "SYMBOL", 
+                     multiVals = "first")
+
+# create column named ENTREZID in sign_genes that contain ENTREZID 
+# of significant genes
+sign_genes$ENTREZID <- entrez_ids
+
+# remove ENTREZID that contain NA 
+sign_genes <- sign_genes[!is.na(sign_genes$ENTREZID), ]
+return(sign_genes)
+}
+
+signficant <- entrez_ids()
+head(signficant)
+
+```
+
+# Up-regulated significant genes
+```{r}
+up_sig_genes <- function(){
+  upregulated_genes <- signficant[signficant$log2FoldChange>0 , ]
+  return(upregulated_genes)
+}
+
+upregulated_sig_genes <- up_sig_genes()
+head(upregulated_sig_genes,5)
+
+```
+# ENTREZIDs of up-regulated significant genes
+```{r}
+up_entrez_ids <- upregulated_sig_genes$ENTREZID
+head(up_entrez_ids)
+```
+
+# Down-regulated significant genes
+```{r}
+down_sig_genes <- function(){
+  downregulated_genes <- signficant[signficant$log2FoldChange < 0 , ]
+  return(downregulated_genes)
+}
+
+downregulated_sig_genes <- down_sig_genes()
+head(downregulated_sig_genes,5)
+
+```
+# ENTREZIDs of down-regulated significant genes
+```{r}
+down_entrez_ids <- downregulated_sig_genes$ENTREZID
+head(down_entrez_ids)
+```
+
+# Gene Ontology
+
+## Group up-regulated significant genes that have similar BP GO terms 
+
+```{r}
+
+go_up <- function(){
+    go <- groupGO( gene = up_entrez_ids,
+                   OrgDb = org.Hs.eg.db,
+                   ont = "BP",  # Biological Process
+                   readable = TRUE)
+    return(go)
+  
+}
+
+go_terms_up <- go_up()
+head(go_terms_up)
+
+```
+
+# Convert GO terms of up-regulated significant genes to DataFrame
+
+```{r}
+dataframe_go_up <- function(){
+  df_go_terms_up <- as.data.frame(go_terms_up)
+  return(df_go_terms_up)
+}
+
+df_go_group_up <- dataframe_go_up()
+
+```
+
+```{r}
+df_go_group_up_top7 <- head(df_go_group_up,7)
+
+```
+
+## Barplot of up-regulated BP GO terms 
+```{r}
+bar_plot_up <- function(){
+p <- ggplot(df_go_group_up_top7, aes(x = reorder(Description, - Count), 
+                                     y = Count, fill = Description)) +
+                                     geom_bar(stat = "identity") +
+                                     ggtitle("BP of up-regulated GO terms") +
+                                     coord_flip() +
+                                     theme_bw() +
+                                     scale_fill_jama()+
+                                     theme(plot.title = element_text(size = 12,
+                                                                face = "bold", 
+                                                                hjust = 0.5))+
+                                     xlab("Description")
+
+
+  jpeg("../Enrichment analysis for breast cancer/outputs/BPgroup_up_barplot.jpeg")
+  print(p)
+  dev.off()
+
+}
+
+bar_plot_up()
+
+
+```
+
+
+## Group down-regulated significant genes that have similar BP GO terms 
+```{r}
+go_down <- function(){
+  go <- groupGO(gene = down_entrez_ids,
+                OrgDb = org.Hs.eg.db,
+                ont = "BP", 
+                readable = TRUE)
+  return(go)
+}
+
+go_terms_down <- go_down()
+head(go_terms_down)
+
+```
+
+# Convert GO terms of down-regulated significant genes to DataFrame
+
+```{r}
+dataframe_go_down <- function(){
+  df_go_terms_down <- as.data.frame(go_terms_down)
+  return(df_go_terms_down)
+}
+
+df_go_group_down <- dataframe_go_down()
+
+```
+
+```{r}
+df_go_group_down_top7 <- head(df_go_group_down,7)
+
+```
+
+## Barplot of down-regulated BP GO terms 
+```{r}
+bar_plot_down <- function(){
+
+p <- ggplot(df_go_group_down_top7, aes(x = reorder(Description, - Count), 
+                                       y = Count, fill = Description)) +
+                                       geom_bar(stat = "identity") +
+                                       ggtitle("BP of down-regulated GO terms")+
+                                       coord_flip() +
+                                       theme_bw() +
+                                       scale_fill_jama()+
+                                      theme(plot.title = element_text(size = 12, 
+                                                                face = "bold", 
+                                                                hjust = 0.5))+
+                                       xlab("Description")
+
+
+  jpeg("../Enrichment analysis for breast cancer/outputs/BPgroup_down_barplot.jpeg")
+  print(p)
+  dev.off()
+
+}
+
+bar_plot_down()
+
+
+```
+
+
+# Over-representation analysis
+
+## Go enrichment analysis
+
+## Enriched GO terms among up-regulated significant genes
+```{r}
+enrich_go_up <- function(){
+        ego_up <- enrichGO( gene          = up_entrez_ids,
+                            universe      = signficant$ENTREZID, 
+                            OrgDb         = org.Hs.eg.db,
+                            keyType       = "ENTREZID",
+                            ont           = "BP",
+                            pvalueCutoff  = 0.05,
+                            qvalueCutoff  = 0.01,  
+                            pAdjustMethod = "BH",   
+                            readable      = TRUE)
+        return(ego_up)
+
+}
+
+enrichment_go_up <- enrich_go_up()
+head(enrichment_go_up)
+
+```
+
+## Dataframe of enriched GO terms among up-regulated significant genes
+```{r}
+df_go_terms_up <- function(){
+  df_go_term_up <- as.data.frame(enrichment_go_up)
+  return(df_go_term_up)
+}
+
+df_go_up <- df_go_terms_up()
+
+```
+
+```{r}
+df_go_up_top7 <- head(df_go_up, 7)
+```
+
+
+## BarPlot of up-regulated BP enriched GO terms 
+```{r}
+bar_plot_enriched_up <- function() {
+  
+  jama_colors <- pal_jama("default")(7)
+  p <- ggplot(df_go_up_top7, aes(x = reorder(Description, -Count), 
+                                 y = Count, 
+                                 fill = p.adjust)) +
+       geom_bar(stat = "identity") +
+       coord_flip() +
+       scale_fill_gradientn(name = "p.adjust", colors = jama_colors) +
+       labs(title = "Bar plot of BP of Enriched Up-regulated GO terms",
+            x = "GO Term",
+            y = "Gene Count") +
+       theme_bw() +
+       theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+  
+  jpeg("../Enrichment analysis for breast cancer/outputs/BP_enriched_up_barplot.jpeg")
+  print(p)  
+  dev.off()
+}
+
+bar_plot_enriched_up()
+
+```
+
+
+## Dotplot of up-regulated BP enriched GO terms
+```{r}
+
+dot_plot_enriched_up <- function(){
+  jama_colors <- pal_jama("default")(7)
+  p <- ggplot(df_go_up_top7, aes(x = reorder(Description, -Count), 
+                                  y = Count, size = Count, color = p.adjust)) +
+    geom_point(alpha = 0.6) +
+    coord_flip() +
+    scale_size_continuous(range = c(3, 8), name = "Gene Count") +
+    scale_color_gradientn(name = "p.adjust", colors = jama_colors) +
+    labs(title = "Dot plot of BP of enriched up-regulated genes",
+         x = "GO Term",
+         y = "Gene Count") +
+    theme_bw() +
+    theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+  
+  
+  jpeg("../Enrichment analysis for breast cancer/outputs/BP_enriched_up_dotplot.jpeg")
+  print(p)
+  dev.off()
+}
+
+dot_plot_enriched_up()
+```
+
+
+```{r}
+jpeg("../Enrichment analysis for breast cancer/outputs/Network_plot_up.jpeg")
+cnet_plot_up <- cnetplot(enrichment_go_up, showCategory = 2, vertex.label.cex = 1.2)
+print(cnet_plot_up)
+dev.off()
+
+```
+
+
+```{r}
+jpeg("../Enrichment analysis for breast cancer/outputs/GO_graph_up.jpeg")
+go_graph_up <- plotGOgraph(enrichment_go_up)
+print(go_graph_up)
+dev.off()
+```
+
+
+## Enriched GO terms among down-regulated significant genes
+```{r}
+enrich_go_down <- function(){
+        ego_down <- enrichGO( gene          = down_entrez_ids,
+                              universe      = signficant$ENTREZID,
+                              OrgDb         = org.Hs.eg.db,
+                              keyType       = "ENTREZID",
+                              ont           = "BP",
+                              pvalueCutoff  = 0.05,
+                              qvalueCutoff  = 0.01,
+                              pAdjustMethod = "BH",   
+                              readable      = TRUE)
+        return(ego_down)
+
+}
+
+enrichment_go_down <- enrich_go_down()
+head(enrichment_go_down)
+
+
+```
+
+## Dataframe of enriched GO terms among down-regulated significant genes
+```{r}
+df_go_terms_down <- function(){
+  df_go_term_down <- as.data.frame(enrichment_go_down)
+  return(df_go_term_down)
+}
+
+df_go_down <- df_go_terms_down()
+
+```
+
+```{r}
+df_go_down_top7 <- head(df_go_down, 7)
+```
+
+## BarPlot of down-regulated BP enriched GO terms 
+```{r}
+bar_plot_enriched_down<- function(){
+  jama_colors <- pal_jama("default")(7)
+  p <- ggplot(df_go_down_top7, aes(x = reorder(Description, - Count) , 
+                                   y = Count, fill = p.adjust)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    scale_fill_gradientn(name = "p.adjust", colors = jama_colors) +
+    labs(title = "Bar plot of BP of Enriched down-regulated Genes",
+         x = "GO Term",
+         y = "Gene Count") +
+    theme_bw() +
+    theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+  
+  jpeg("../Enrichment analysis for breast cancer/outputs/BP_enriched_down_barplot.jpeg")
+  print(p)  
+  dev.off()
+}
+
+bar_plot_enriched_down()
+
+```
+
+## Dotplot of down-regulated BP enriched GO terms
+```{r}
+dot_plot_enriched_down<- function(){
+  
+  jama_colors <- pal_jama("default")(7)
+  p <- ggplot(df_go_down_top7, aes(x = reorder(Description, -Count),
+                                     y = Count, size = Count,
+                                     color = p.adjust)) +
+         geom_point(alpha = 0.6) +
+         coord_flip() +
+         scale_size_continuous(range = c(3, 8), name = "Gene Count") +
+         scale_color_gradientn(name = "p.adjust", colors = jama_colors) +
+         labs(title = "Dot plot of BP of enriched down-regulated genes",
+              x = "GO Term",
+              y = "Gene Count") +
+         theme_bw() +
+         theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+  
+  jpeg("../Enrichment analysis for breast cancer/outputs/BP_enriched_down_dotplot.jpeg", 
+       width = 700, height = 800)
+  print(p)
+  dev.off()
+}
+
+dot_plot_enriched_down()
+
+```
+
+```{r}
+jpeg("../Enrichment analysis for breast cancer/outputs/GO_graph_down.jpeg")
+go_graph_down <- plotGOgraph(enrichment_go_down)
+print(go_graph_down)
+dev.off()
+```
+
+## Pathway Enrichment Analysis
+
+## KEGG pathway enrichment analysis among up-regulated significant genes
+```{r}
+kegg_enrichment_up <- function(){
+  
+kegg_up <- enrichKEGG(gene = up_entrez_ids,
+                      universe = signficant$ENTREZID,
+                      organism = "hsa", 
+                      pvalueCutoff = 0.05,
+                      qvalueCutoff = 0.01,
+                      pAdjustMethod = "BH")
+  return(kegg_up)
+
+}
+
+kegg_enrich_up <- kegg_enrichment_up()
+head(kegg_enrich_up)
+
+```
+
+
+## DataFrame of KEGG enriched among up-regulated significant genes
+```{r}
+dataframe_kegg_up <- function(){
+  df_kegg_up_genes <- as.data.frame(kegg_enrich_up)
+  return(df_kegg_up_genes)
+}
+
+df_kegg_up <- dataframe_kegg_up()
+
+```
+
+```{r}
+df_kegg_up_top7 <- head(df_kegg_up, 7)
+```
+
+
+## Barplot for KEGG enriched up-regulated significant gene 
+```{r}
+
+bar_plot_kegg_enriched_up<- function(){
+  
+  jama_colors <- pal_jama("default")(7)
+  p <- ggplot(df_kegg_up_top7, aes(x = reorder(Description, - Count), 
+                                   y = Count, fill = p.adjust)) +
+         geom_bar(stat = "identity", width = 0.8) +
+         coord_flip() +
+         scale_fill_gradientn(name = "p.adjust", colors = jama_colors) +
+         labs(title = "Bar plot of Enriched KEGG pathway of up-regulated Genes",
+             x = "Enriched pathway",
+             y = "Gene Count") +
+         theme_bw() +
+         theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+  
+  jpeg("../Enrichment analysis for breast cancer/outputs/kegg_enriched_up_barplot.jpeg",
+  width = 700, height = 800)
+  print(p)  
+  dev.off()
+  
+}
+
+bar_plot_kegg_enriched_up()
+
+```
+
+## Dotplot for KEGG enriched up-regulated significant gene 
+```{r}
+
+dot_plot_kegg_enriched_up<- function(){
+  
+  jama_colors <- pal_jama("default")(7)
+  p  <- ggplot(df_kegg_up_top7, aes(x = reorder(Description, -Count), 
+                                   y = Count, size = Count, color = p.adjust))+
+        geom_point(alpha = 0.6) +
+        coord_flip() +
+        scale_size_continuous(range = c(3, 8), name = "Gene Count") +
+        scale_color_gradientn(name = "p.adjust", colors = jama_colors) +
+        labs(title = "Dot plot of BP of enriched up-regulated genes",
+             x = "GO Term",
+             y = "Gene Count") +
+        theme_bw() +
+        theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+  
+  
+  jpeg("../Enrichment analysis for breast cancer/outputs/kegg_enriched_up_dotplot.jpeg",
+  width = 700, height = 800)
+  print(p)
+  dev.off()
+}
+
+dot_plot_kegg_enriched_up()
+
+```
+
+
+# Visualize the top enriched pathway that have smallest qval
+```{r message=FALSE , results='hide'}
+
+visualize_top_path_up <- function(){
+  pathview(gene.data = up_entrez_ids, 
+           pathway.id = "hsa04110", 
+           species = "hsa",
+           kegg.dir = "../Enrichment analysis for breast cancer/outputs/")
+}
+
+visualize_top_path_up()
+
+```
+
+## Browse the top enriched pathway for up-regulated sig genes
+```{r}
+browseKEGG(kegg_enrich_up, 'hsa04110')
+```
+
+
+
+
+
+## KEGG pathway enrichment analysis among down-regulated significant genes
+```{r}
+kegg_enrichment_down <- function(){
+kegg_down <- enrichKEGG(gene = down_entrez_ids,
+                        universe = signficant$ENTREZID,
+                        organism = "hsa", 
+                        pvalueCutoff = 0.05,
+                        qvalueCutoff = 0.01,
+                        pAdjustMethod = "BH")
+return(kegg_down)
+}
+
+kegg_enrich_down <- kegg_enrichment_down()
+head(kegg_enrich_down)
+
+```
+
+
+## DataFrame of KEGG enriched among down-regulated significant genes
+```{r}
+dataframe_kegg_down <- function(){
+  df_kegg_down_genes <- as.data.frame(kegg_enrich_down)
+  return(df_kegg_down_genes)
+}
+
+df_kegg_down <- dataframe_kegg_down()
+
+```
+
+```{r}
+df_kegg_down_top7 <- head(df_kegg_down, 7)
+```
+
+
+## Barplot for KEGG enriched down-regulated significant gene 
+```{r}
+
+bar_plot_kegg_enriched_down<- function(){
+  
+  jama_colors <- pal_jama("default")(7)
+  p <- ggplot(df_kegg_down_top7, aes(x = reorder(Description, - Count),
+                                     y = Count, fill = p.adjust)) +
+       geom_bar(stat = "identity", width = 0.8) +
+       coord_flip() +
+       scale_fill_gradientn(name = "p.adjust", colors = jama_colors) +
+       labs(title = "Bar plot of Enriched KEGG pathway of down-regulated Genes",
+           x = "Enriched pathway",
+           y = "Gene Count") +
+       theme_bw() +
+       theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+  
+  jpeg("../Enrichment analysis for breast cancer/outputs/kegg_enriched_down_barplot.jpeg",
+  width = 700, height = 800)
+  print(p)  
+  dev.off()
+  
+}
+
+bar_plot_kegg_enriched_down()
+
+```
+
+## Dotplot for KEGG enriched down-regulated significant gene 
+```{r}
+
+dot_plot_kegg_enriched_down <- function(){
+  jama_colors <- pal_jama("default")(7)
+  p <- ggplot(df_kegg_down_top7, aes(x = reorder(Description, -Count), 
+                                     y = Count, size = Count, 
+                                     color = p.adjust)) +
+       geom_point(alpha = 0.6) +
+       coord_flip() +
+       scale_size_continuous(range = c(3, 8), name = "Gene Count") +
+       scale_color_gradientn(name = "p.adjust", colors = jama_colors) +
+       labs(title = "Dot plot of BP of enriched down-regulated genes",
+           x = "GO Term",
+           y = "Gene Count") +
+       theme_bw() +
+       theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+  
+  
+  jpeg("../Enrichment analysis for breast cancer/outputs/kegg_enriched_down_dotplot.jpeg",
+  width = 700, height = 800)
+  print(p)
+  dev.off()
+}
+
+dot_plot_kegg_enriched_down()
+
+```
+
+
+# Visualize the top enriched pathway that have smallest qval
+
+```{r message=FALSE , results='hide'}
+
+visualize_top_path_down <- function(){
+  pathview(gene.data = down_entrez_ids, 
+           pathway.id = "hsa04080", 
+           species = "hsa",
+           kegg.dir = "../Enrichment analysis for breast cancer/outputs/")
+}
+
+visualize_top_path_down()
+
+```
+
+## Browse the top enriched pathway for down-regulated sig genes
+```{r}
+browseKEGG(kegg_enrich_down, 'hsa04080')
+```
+
+
+## Reactome pathway enrichment analysis among up-regulated significant genes
+```{r}
+reactome_up_genes <- function(){
+  reactome_enrichment <- enrichPathway(gene          = up_entrez_ids,
+                                       universe      = signficant$ENTREZID,
+                                       organism      = "human", 
+                                       pvalueCutoff  = 0.05, 
+                                       qvalueCutoff  = 0.01,
+                                       pAdjustMethod = "BH")
+  
+  return(reactome_enrichment)
+}
+
+reactome_enriched_path_up <- reactome_up_genes()
+head(reactome_enriched_path_up)
+
+
+```
+
+## DataFrame of Reactome enriched pathways of up-regulated significant genes
+```{r}
+dataframe_reactome_up <- function(){
+  df_reactome_up_genes <- as.data.frame(reactome_enriched_path_up)
+  return(df_reactome_up_genes)
+}
+
+df_reactome_up <- dataframe_reactome_up()
+
+```
+
+# Visualize Reactome Pathway Enrichment Results
+```{r}
+df_reactome_up_top7 <- head(df_reactome_up, 7)
+```
+
+## Barplot for Reactome enriched up-regulated significant gene 
+```{r}
+
+bar_plot_reactome_enriched_up<- function(){
+  jama_colors <- pal_jama("default")(7)
+  p <- ggplot(df_reactome_up_top7, aes(x = reorder(Description, - Count), 
+                                       y = Count, fill = p.adjust)) +
+       geom_bar(stat = "identity", width = 0.8) +
+       coord_flip() +
+       scale_fill_gradientn(name = "p.adjust", colors = jama_colors) +
+       labs(title = "Bar plot of Enriched Reactome pathway of up-regulated Genes",
+            x = "Enriched pathway",
+            y = "Gene Count") +
+       theme_bw() +
+       theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+  
+  jpeg("../Enrichment analysis for breast cancer/outputs/reactome_enriched_up_barplot.jpeg", 
+  width = 700, height = 800)
+  print(p)  
+  dev.off()
+  
+}
+
+bar_plot_reactome_enriched_up()
+
+
+```
+
+## Dotplot for Reactome enriched up-regulated significant gene 
+```{r}
+dot_plot_reactome_enriched_up<- function(){
+ jama_colors <- pal_jama("default")(7)
+ p <- ggplot(df_reactome_up_top7, aes(x = reorder(Description, -Count), 
+                                      y = Count, size = Count, 
+                                      color = p.adjust)) +
+      geom_point(alpha = 0.6) +
+      coord_flip() +
+      scale_size_continuous(range = c(3, 8), name = "Gene Count") +
+      scale_color_gradientn(name = "p.adjust", colors = jama_colors) +
+      labs(title = "Dot plot of BP of enriched up-regulated genes",
+           x = "GO Term",
+           y = "Gene Count") +
+      theme_bw() +
+      theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+    
+    
+jpeg("../Enrichment analysis for breast cancer/outputs/reactome_enriched_up_dotplot.jpeg",
+width = 700, height = 800)
+print(p)
+dev.off()
+}
+
+dot_plot_reactome_enriched_up()
+
+
+```
+
+
+## visualize the top enriched Reactome pathway for up-regulated sig genes
+## Take the generated URL and browse it 
+```{r}
+visualize_reactome_path_up <- function(){
+  # Convert the Reactome ID to a URL for visualization
+  reactome_url <- paste0("https://reactome.org/PathwayBrowser/#/", "R-HSA-1640170")
+  # Print the URL for manual review
+  print(reactome_url)
+
+}
+
+visualize_reactome_path_up()
+
+```
+ 
+ 
+## Reactome pathway enrichment analysis for down-regulated significant genes
+```{r}
+reactome_down_genes <- function(){
+  reactome_enrichment <- enrichPathway(gene = down_entrez_ids,
+                                       universe = signficant$ENTREZID,
+                                       organism = "human", 
+                                       pvalueCutoff = 0.05,
+                                       qvalueCutoff = 0.01,
+                                       pAdjustMethod = "BH")
+  
+  return(reactome_enrichment)
+}
+
+reactome_enriched_path_down <- reactome_down_genes()
+head(reactome_enriched_path_down)
+
+
+```
+
+## DataFrame of Reactome enriched pathways of down-regulated significant genes
+```{r}
+dataframe_reactome_down <- function(){
+  df_reactome_down_genes <- as.data.frame(reactome_enriched_path_down)
+  return(df_reactome_down_genes)
+}
+
+df_reactome_down <- dataframe_reactome_down()
+
+```
+
+
+# Visualize Reactome Pathway Enrichment Results
+
+## Select the top 7 enriched reactome pathways
+```{r}
+df_reactome_down_top7 <- head(df_reactome_down, 7)
+```
+
+## Barplot for Reactome enriched down-regulated significant gene 
+```{r}
+
+bar_plot_reactome_enriched_down<- function(){
+  jama_colors <- pal_jama("default")(7)
+  p <- ggplot(df_reactome_down_top7, aes(x = reorder(Description, - Count) , 
+                                         y = Count, fill = p.adjust)) +
+         geom_bar(stat = "identity", width = 0.8) +
+         coord_flip() +
+         scale_fill_gradientn(name = "p.adjust", colors = jama_colors) +
+         labs(title = "Bar plot of Enriched Reactome pathway of down-regulated Genes",
+              x = "Enriched pathway",
+              y = "Gene Count") +
+         theme_bw() +
+         theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+  
+  jpeg("../Enrichment analysis for breast cancer/outputs/reactome_enriched_down_barplot.jpeg",
+  width = 700, height = 800)
+  print(p)  
+  dev.off()
+  
+}
+
+bar_plot_reactome_enriched_down()
+
+
+```
+
+## Dotplot for Reactome enriched downregulated significant gene 
+```{r}
+dot_plot_reactome_enriched_down<- function(){
+  jama_colors <- pal_jama("default")(7)
+  p <- ggplot(df_reactome_down_top7, aes(x = reorder(Description, -Count), 
+                                         y = Count, size = Count, 
+                                         color = p.adjust)) +
+       geom_point(alpha = 0.6) +
+       coord_flip() +
+       scale_size_continuous(range = c(3, 8), name = "Gene Count") +
+       scale_color_gradientn(name = "p.adjust", colors = jama_colors) +
+       labs(title = "Dot plot of BP of enriched down-regulated genes",
+             x = "GO Term",
+             y = "Gene Count") +
+       theme_bw() +
+       theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+    
+    
+jpeg("../Enrichment analysis for breast cancer/outputs/reactome_enriched_down_dotplot.jpeg",
+width = 700, height = 800)
+print(p)
+dev.off()
+}
+
+dot_plot_reactome_enriched_down()
+
+
+```
+
+
+## visualize the top enriched Reactome pathway for down-regulated sig genes
+## Take the generated URL and browse it 
+```{r}
+visualize_reactome_path_down <- function(){
+  # Convert the Reactome ID to a URL for visualization
+  reactome_url <- paste0("https://reactome.org/PathwayBrowser/#/", "R-HSA-397014")
+  # Print the URL for manual review
+  print(reactome_url)
+}
+
+visualize_reactome_path_down()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
