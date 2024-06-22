@@ -1,0 +1,644 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Perform Enrichment Analysis
+
+# Loading required libraries
+```{r message=FALSE}
+
+library(clusterProfiler)
+library(org.Dm.eg.db)
+library(pathview)
+library(biomaRt)
+library(ReactomePA)
+library(ggplot2)
+library(RColorBrewer)
+library(ggsci)
+```
+
+# Read significant genes into csv file
+```{r}
+sig_genes <- function(file_path){
+  genes <- read.csv(file_path, row.names = 1, stringsAsFactors = FALSE)
+  final_genes <- na.omit(genes)
+  return(final_genes)
+  
+}
+significant_genes <- sig_genes("../Enrichment analysis in R/Data/Significant genes.csv")
+head(significant_genes)
+```
+
+# Convert FlyBase IDs (FBgn) to ENTREZ IDs
+```{r}
+entrez_ids <- function(){
+# copy the rownames of significant_genes and store it in flybase_ids
+flybase_ids <- rownames(significant_genes)
+# convert FLYBASE ids into ENTREZID
+entrez_ids <- mapIds(org.Dm.eg.db, 
+                     keys = flybase_ids, 
+                     column = "ENTREZID", 
+                     keytype = "FLYBASE", 
+                     multiVals = "first")
+# create column named ENTREZID in significant_genes that contain ENTREZID 
+# of sig genes
+significant_genes$ENTREZID <- entrez_ids
+# remove ENTREZID that contain NA 
+sign_genes <- significant_genes[!is.na(significant_genes$ENTREZID), ]
+return(sign_genes)
+}
+
+sign_genes <- entrez_ids()
+head(sign_genes)
+```
+
+
+# Up-regulated significant genes
+```{r}
+up_sig_genes <- function(){
+  upregulated_genes <- sign_genes[ sign_genes$padj<0.01 & sign_genes$log2FoldChange>0 , ]
+  return(upregulated_genes)
+}
+
+upregulated_sig_genes <- up_sig_genes()
+upregulated_sig_genes
+```
+
+
+# ENTREZIDs of up-regulated significant genes
+```{r}
+up_entrez_ids <- upregulated_sig_genes$ENTREZID
+up_entrez_ids
+```
+
+
+# Down-regulated significant genes
+```{r}
+down_sig_genes <- function(){
+  downregulated_genes <- sign_genes[ sign_genes$padj<0.01 & sign_genes$log2FoldChange<0 , ]
+  return(downregulated_genes)
+}
+downregulated_sig_genes <- down_sig_genes()
+downregulated_sig_genes
+```
+
+# ENTREZIDs of Down-regulated significant genes
+```{r}
+down_entrez_ids <- downregulated_sig_genes$ENTREZID
+down_entrez_ids
+
+```
+
+
+# Gene Ontology
+
+## Group up-regulated significant genes that have similar BP GO terms 
+
+```{r}
+
+go_up <- function(){
+    go <- groupGO( gene = up_entrez_ids,
+                   OrgDb = org.Dm.eg.db,
+                   ont = "BP",  # Biological Process
+                   readable = TRUE)
+    return(go)
+  
+}
+go_terms_up <- go_up()
+head(go_terms_up)
+
+```
+## Convert GO terms of up-regulated significant genes to DataFrame
+
+```{r}
+dataframe_go_up <- function(){
+df_go_terms_up <- as.data.frame(go_terms_up)
+return(df_go_terms_up)
+}
+df_go_group_up <- dataframe_go_up()
+```
+
+```{r}
+df_go_group_up_top7 <- head(df_go_group_up,7)
+```
+
+
+## Barplot of up-regulated BP GO terms 
+```{r}
+bar_plot_up <- function(){
+p <- ggplot(df_go_group_up_top7, aes(x = reorder(Description, - Count),
+                                     y = Count, fill = Description)) +
+                                     geom_bar(stat = "identity") +
+                                     ggtitle("BP of up-regulated GO terms") +
+                                     coord_flip() +
+                                     theme_bw() +
+                                     scale_fill_jama()+
+                                     theme(plot.title = element_text(size = 12,
+                                     face = "bold", hjust = 0.5))+
+                                     xlab("Description")
+jpeg("../Enrichment analysis in R/outputs/BPgroup_up_barplot.jpeg")
+print(p)
+dev.off()
+}
+bar_plot_up()
+```
+
+## Group down-regulated significant genes that have similar MF GO terms 
+```{r}
+go_down <- function(){
+  go <- groupGO(gene = down_entrez_ids,
+                OrgDb = org.Dm.eg.db,
+                ont = "MF",  # Molecular function
+                readable = TRUE)
+  return(go)
+}
+go_terms_down <- go_down()
+head(go_terms_down)
+```
+## Convert GO terms of down-regulated significant genes to DataFrame
+```{r}
+dataframe_go_down <- function(){
+df_go_terms_down <- as.data.frame(go_terms_down)
+return(df_go_terms_down)
+}
+df_go_group_down <- dataframe_go_down()
+```
+
+```{r}
+df_go_group_down_top7 <- head(df_go_group_down,7)
+```
+
+## Barplot of down-regulated MF GO terms 
+```{r}
+bar_plot_down <- function(){
+p <- ggplot(df_go_group_down_top7, aes(x = reorder(Description, - Count),
+                                       y = Count, fill = Description)) +
+                                       geom_bar(stat = "identity") +
+                                       ggtitle("MF of down-regulated GO terms")+
+                                       coord_flip() +
+                                       theme_bw() +
+                                       scale_fill_jama()+
+                                       theme(plot.title = element_text(size = 12,
+                                       face = "bold", hjust = 0.5))+
+                                       xlab("Description")
+jpeg("../Enrichment analysis in R/outputs/MFgroup_down_barplot.jpeg")
+print(p)
+dev.off()
+}
+bar_plot_down()
+```
+
+
+# Over-representation analysis
+
+## Go enrichment analysis
+
+## Enriched GO terms among up-regulated significant genes
+```{r}
+enrich_go_up <- function(){
+        ego_up <- enrichGO( gene          = up_entrez_ids,
+                            OrgDb         = org.Dm.eg.db,
+                            keyType       = "ENTREZID",
+                            ont           = "CC",
+                            pvalueCutoff  = 0.05,
+                            pAdjustMethod = "BH",   
+                            readable      = TRUE)
+        return(ego_up)
+}
+enrichment_go_up <- enrich_go_up()
+head(enrichment_go_up)
+```
+
+
+## Dataframe of enriched GO terms for up-regulated significant genes
+```{r}
+df_go_terms_up <- function(){
+  df_go_term_up <- as.data.frame(enrichment_go_up)
+  return(df_go_term_up)
+}
+df_go_up <- df_go_terms_up()
+```
+
+```{r}
+df_go_up_top7 <- head(df_go_up, 7)
+```
+
+## BarPlot of up-regulated CC enriched GO terms 
+```{r}
+bar_plot_enriched_up <- function(){
+jama_colors <- pal_jama("default")(7)
+p <- ggplot(df_go_up_top7, aes(x = reorder(Description, -Count),
+                               y = Count, fill = p.adjust)) +
+                               geom_bar(stat = "identity") +
+                               coord_flip() +
+                               scale_fill_gradientn(name = "p.adjust", 
+                                                    colors = jama_colors) +
+          labs(title = "Bar plot of CC of Enriched Up-regulated GO terms",
+               x = "GO Term",
+               y = "Gene Count") +
+                              theme_bw() +
+          theme(plot.title = element_text(size = 10,face = "bold", hjust = 0.5))
+jpeg("../Enrichment analysis in R/outputs/CC_enriched_up_barplot.jpeg")
+print(p)
+dev.off()
+}
+bar_plot_enriched_up()
+```
+
+
+## Dotplot of up-regulated CC enriched GO terms
+```{r}
+dot_plot_enriched_up <- function(){
+jama_colors <- pal_jama("default")(7)
+p <- ggplot(df_go_up_top7, aes(x = reorder(Description, -Count),
+                               y = Count, size = Count, color = p.adjust)) +
+                               geom_point(alpha = 0.6) +
+                               coord_flip() +
+                               scale_size_continuous(range = c(3, 8), 
+                                                     name = "Gene Count") +
+                               scale_color_gradientn(name = "p.adjust", 
+                                                     colors = jama_colors) +
+                labs(title = "Dot plot of CC of enriched up-regulated genes",
+                     x = "GO Term",
+                     y = "Gene Count") +
+                               theme_bw() +
+                               theme(plot.title = element_text(size = 10, 
+                                                               face = "bold", 
+                                                               hjust = 0.5))
+jpeg("../Enrichment analysis in R/outputs/CC_enriched_up_dotplot.jpeg")
+print(p)
+dev.off()
+}
+dot_plot_enriched_up()
+```
+
+## Network plot for enriched GO terms among up-regulated genes
+
+```{r}
+jpeg("../Enrichment analysis in R/outputs/Network_plot_up.jpeg")
+cnet_plot_up <- cnetplot(enrichment_go_up, showCategory = 3, vertex.label.cex = 1.2)
+print(cnet_plot_up)
+dev.off()
+```
+
+## GO graph for enriched GO terms among up-regulated significant genes
+```{r}
+jpeg("../Enrichment analysis in R/outputs/GO_graph_up.jpeg")
+go_graph_up <- plotGOgraph(enrichment_go_up)
+print(go_graph_up)
+dev.off()
+```
+
+
+## Enriched GO terms for down-regulated significant genes
+```{r}
+enrich_go_down <- function(){
+        ego_down <- enrichGO( gene          = down_entrez_ids,
+                            OrgDb         = org.Dm.eg.db,
+                            keyType       = "ENTREZID",
+                            ont           = "MF",
+                            pvalueCutoff  = 0.05,
+                            pAdjustMethod = "BH",   
+                            readable      = TRUE)
+        return(ego_down)
+
+}
+
+enrichment_go_down <- enrich_go_down()
+head(enrichment_go_down)
+```
+
+## Dataframe of enriched GO terms among down-regulated significant genes
+```{r}
+df_go_terms_down <- function(){
+df_go_term_down <- as.data.frame(enrichment_go_down)
+return(df_go_term_down)
+}
+df_go_down <- df_go_terms_down()
+```
+
+## BarPlot of down-regulated MF enriched GO terms 
+```{r}
+bar_plot_enriched_down<- function(){
+jama_colors <- pal_jama("default")(7)
+p <- ggplot(df_go_down, aes(x = reorder(Description, - Count) ,
+                            y = Count, fill = p.adjust)) +
+                            geom_bar(stat = "identity") +
+                            coord_flip() +
+                            scale_fill_gradientn(name = "p.adjust", 
+                                                 colors = jama_colors) +
+            labs(title = "Bar plot of MF of Enriched down-regulated Genes",
+                            x = "GO Term",
+                            y = "Gene Count") +
+                            theme_bw() +
+                            theme(plot.title = element_text(size = 10, 
+                                                            face = "bold", 
+                                                            hjust = 0.5))
+jpeg("../Enrichment analysis in R/outputs/MF_enriched_down_barplot.jpeg",
+width = 700, height = 800)
+print(p)
+dev.off()
+}
+bar_plot_enriched_down()
+```
+
+
+## Dotplot of down-regulated MF enriched GO terms
+```{r}
+dot_plot_enriched_down<- function(){
+jama_colors <- pal_jama("default")(7)
+p <- ggplot(df_go_down, aes(x = reorder(Description, -Count),
+                            y = Count, size = Count,
+                            color = p.adjust)) +
+                            geom_point(alpha = 0.6) +
+                            coord_flip() +
+                            scale_size_continuous(range = c(3, 8), 
+                                                  name = "Gene Count") +
+                            scale_color_gradientn(name = "p.adjust", 
+                                                  colors = jama_colors) +
+             labs(title = "Dot plot of MF of enriched down-regulated genes",
+                            x = "GO Term",
+                            y = "Gene Count") +
+                            theme_bw() +
+                            theme(plot.title = element_text(size = 10, 
+                                                            face = "bold", 
+                                                            hjust = 0.5))
+jpeg("../Enrichment analysis in R/outputs/MF_enriched_down_dotplot.jpeg",
+width = 700, height = 800)
+print(p)
+dev.off()
+}
+dot_plot_enriched_down()
+```
+
+## Network plot for enriched GO terms among down-regulated genes
+```{r}
+jpeg("../Enrichment analysis in R/outputs/Network_plot_down.jpeg")
+cnet_plot_down <- cnetplot(enrichment_go_down, showCategory = 7, vertex.label.cex = 1.2)
+print(cnet_plot_down)
+dev.off()
+```
+
+## GO graph for enriched GO terms among down-regulated significant genes
+```{r}
+jpeg("../Enrichment analysis in R/outputs/GO_graph_down.jpeg")
+go_graph_down <- plotGOgraph(enrichment_go_down)
+print(go_graph_down)
+dev.off()
+```
+
+## Pathway enrichment analysis
+
+## Extract sig gene names from ensembl database 
+```{r}
+
+ensembl_gene_names <- function() {
+  # Connect to the Ensembl database
+  ensembl <- useMart("ensembl", dataset = "dmelanogaster_gene_ensembl")
+  # list of Drosophila melanogaster FlyBase gene IDs
+  flybase_gene_ids <- rownames(sign_genes)
+  # Convert FlyBase gene IDs to external gene identifiers
+  gene_info <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"), filters = "flybase_gene_id", values = flybase_gene_ids, mart = ensembl)
+  return(gene_info)
+}
+gene_info_result <- ensembl_gene_names()
+head(gene_info_result)
+```
+
+## Up-regulated Dmel_XXXX ids 
+```{r}
+dmel_up <- function(){
+  filtered_up_sig_genes <- gene_info_result[gene_info_result$ensembl_gene_id %in%   rownames(upregulated_sig_genes), ]
+  dmel_up_identifiers <- paste("Dmel", filtered_up_sig_genes$external_gene_name, 
+                               sep = "_")
+  return(dmel_up_identifiers)
+}
+dmel_up_genes <- dmel_up()
+dmel_up_genes
+```
+
+## KEGG pathway enrichment analysis among up-regulated significant genes
+```{r}
+kegg_enrichment_up <- function(){
+kegg_up <- enrichKEGG(gene = dmel_up_genes,
+                        organism = "dme", # Drosophila melanogaster
+                        pvalueCutoff = 0.05)
+  return(kegg_up)
+}
+kegg_enrich_up <- kegg_enrichment_up()
+head(kegg_enrich_up)
+```
+
+## DataFrame of KEGG enriched among up-regulated significant genes
+```{r}
+dataframe_kegg_up <- function(){
+  df_kegg_up_genes <- as.data.frame(kegg_enrich_up)
+  return(df_kegg_up_genes)
+}
+df_kegg_up <- dataframe_kegg_up()
+head(df_kegg_up)
+```
+
+## Barplot for KEGG enriched up-regulated significant gene 
+```{r}
+bar_plot_kegg_enriched_up<- function(){
+jama_colors <- pal_jama("default")(7)
+p <- ggplot(df_kegg_up, aes(x = reorder(Description, - Count),
+                            y = Count, fill = p.adjust)) +
+                            geom_bar(stat = "identity", width = 0.8) +
+                            coord_flip() +
+                            scale_fill_gradientn(name = "p.adjust", 
+                                                 colors = jama_colors) +
+      labs(title = "Bar plot of Enriched KEGG pathway among up-regulated Genes",
+           x = "Enriched pathway",
+           y = "Gene Count") +
+                            theme_bw() +
+                            theme(plot.title = element_text(size = 10, 
+                                                            face = "bold", 
+                                                            hjust = 0.5))
+jpeg("../Enrichment analysis in R/outputs/kegg_enriched_up_barplot.jpeg",
+width = 700, height = 800)
+print(p)
+dev.off()
+}
+bar_plot_kegg_enriched_up()
+```
+
+
+## Dotplot for Enriched KEGG pathway among up-regulated significant gene
+```{r}
+dot_plot_kegg_enriched_up<- function(){
+jama_colors <- pal_jama("default")(7)
+p <- ggplot(df_kegg_up, aes(x = reorder(Description, -Count),
+                            y = Count, size = Count,
+                            color = p.adjust))+
+                            geom_point(alpha = 0.6) +
+                            coord_flip() +
+                            scale_size_continuous(range = c(3, 8), 
+                                                  name = "Gene Count") +
+                            scale_color_gradientn(name = "p.adjust", 
+                                                  colors = jama_colors) +
+      labs(title = "Dot plot of Enriched KEGG pathway among up-regulated genes",
+                            x = "GO Term",
+                            y = "Gene Count") +
+                            theme_bw() +
+                            theme(plot.title = element_text(size = 10, 
+                                                            face = "bold", 
+                                                            hjust = 0.5))
+jpeg("../Enrichment analysis in R/outputs/kegg_enriched_up_dotplot.jpeg",
+width = 800, height = 800)
+print(p)
+dev.off()
+}
+dot_plot_kegg_enriched_up()
+```
+
+
+
+# Visualize a specific pathway
+
+## visualize the top enriched KEGG pathway among up-regulated sig genes
+```{r}
+visualize_top_path_up <- function(){
+  pathview(gene.data = up_entrez_ids, 
+           pathway.id = "dme04512", 
+           species = "dme",
+           kegg.dir = "../Enrichment analysis in R/outputs/")
+}
+visualize_top_path_up()
+```
+
+## Browse the top enriched pathway among up-regulated sig genes
+```{r}
+browseKEGG(kegg_enrich_up, 'dme04512')
+```
+
+
+
+## Downregulated Dmel_XXXX ids 
+```{r}
+dmel_down <- function(){
+  filtered_down_sig_genes <- gene_info_result[gene_info_result$ensembl_gene_id %in% rownames(downregulated_sig_genes), ]
+  
+  dmel_down_identifiers <- paste("Dmel", filtered_down_sig_genes$external_gene_name,sep = "_")
+  return(dmel_down_identifiers)
+}
+dmel_down_genes <- dmel_down()
+dmel_down_genes
+```
+
+## KEGG pathway enrichment analysis among down-regulated significant genes
+```{r message=FALSE}
+kegg_enrichment_down <- function(){
+  kegg_down <- enrichKEGG(gene = dmel_down_genes,
+                          organism = "dme", # Drosophila melanogaster
+                          pvalueCutoff = 0.05,
+                          pAdjustMethod = "BH")
+  if (is.null(kegg_down) || nrow(kegg_down) == 0) {
+      print("No enriched pathways found")
+    }
+  return(kegg_down)
+}
+kegg_enrich_down <- kegg_enrichment_down()
+```
+
+## Reactome pathway enrichment analysis among down-regulated significant genes
+```{r}
+reactome_down_genes <- function(){
+  reactome_enrichment <- enrichPathway(gene = down_entrez_ids,
+                                       organism = "fly", # Drosophila melanogaster
+                                       pvalueCutoff = 0.05)
+  
+  return(reactome_enrichment)
+}
+reactome_enriched_path_down <- reactome_down_genes()
+head(reactome_enriched_path_down)
+```
+
+## DataFrame of Reactome enriched pathways among down-regulated significant genes
+```{r}
+dataframe_reactome_down <- function(){
+  df_reactome_down_genes <- as.data.frame(reactome_enriched_path_down)
+  return(df_reactome_down_genes)
+}
+df_reactome_down <- dataframe_reactome_down()
+head(df_reactome_down)
+```
+
+
+# Visualize Reactome Pathway Enrichment Results
+
+## Barplot for Reactome enriched pathways among down-regulated significant gene 
+```{r}
+bar_plot_reactome_enriched_down<- function(){
+jama_colors <- pal_jama("default")(7)
+p <- ggplot(df_reactome_down, aes(x = reorder(Description, - Count) ,
+                                  y = Count, fill = p.adjust)) +
+                                  geom_bar(stat = "identity", width = 0.8) +
+                                  coord_flip() +
+                                  scale_fill_gradientn(name = "p.adjust", 
+                                                       colors = jama_colors) + labs(title = "Bar plot of Enriched Reactome pathways among down-regulated Genes",
+     x = "Enriched pathway",
+     y = "Gene Count") +
+                                  theme_bw() +
+                                  theme(plot.title = element_text(size = 10, 
+                                                                  face = "bold",                                                                     hjust = 0.5))
+jpeg("../Enrichment analysis in R/outputs/reactome_enriched_down_barplot.jpeg",
+width = 700, height = 800)
+print(p)
+dev.off()
+}
+bar_plot_reactome_enriched_down()
+```
+
+## Dotplot for Reactome enriched pathways among downregulated significant gene 
+```{r}
+dot_plot_reactome_enriched_down<- function(){
+jama_colors <- pal_jama("default")(7)
+p <- ggplot(df_reactome_down, aes(x = reorder(Description, -Count),
+                                  y = Count, size = Count,
+                                  color = p.adjust)) +
+                                  geom_point(alpha = 0.6) +
+                                  coord_flip() +
+                                  scale_size_continuous(range = c(3, 8), 
+                                                        name = "Gene Count") +
+                                  scale_color_gradientn(name = "p.adjust", 
+                                                        colors = jama_colors) +
+labs(title = "Dot plot of enriched Reactome pathways among down-regulated genes",
+     x = "GO Term",
+     y = "Gene Count") +
+                                  theme_bw() +
+                                  theme(plot.title = element_text(size = 10, 
+                                                                  face = "bold",                                                                     hjust = 0.5))
+jpeg("../Enrichment analysis in R/outputs/reactome_enriched_down_dotplot.jpeg",
+width = 700, height = 800)
+print(p)
+dev.off()
+}
+dot_plot_reactome_enriched_down()
+```
+
+## visualize the top enriched Reactome pathway for down-regulated sig genes
+## Take the generated URL and browse it 
+```{r}
+visualize_reactome_path_up <- function(){
+  # Convert the Reactome ID to a URL for visualization
+  reactome_url <- paste0("https://reactome.org/PathwayBrowser/#/", "R-DME-8964038")
+  # Print the URL for manual review
+  print(reactome_url)
+}
+visualize_reactome_path_up()
+```
+
+
+
+
+
+
+
+
+
+
+
