@@ -60,11 +60,24 @@ all(rownames(meta_data) %in% colnames(expression_matrix))
 rownames(meta_data) = colnames(expression_matrix)
 ```
 
+# Pre-filtering: removing rows with low gene counts
+## keep rows that have at least 10 reads total
+
+```{r}
+pre_filter <- function(){
+  # Only keep rows that have total counts above the cutoff
+  keep <- expression_matrix %>% rowSums(.) >= 10
+  filtered_counts <- expression_matrix[keep,]
+  return (filtered_counts)
+}
+filtered_expression_counts <- pre_filter()
+head(filtered_expression_counts,2)
+```
 
 # Construct a DESeqDataSet.
 ```{r}
 deseqdataset <- function(){
-  deseqdataset <- DESeqDataSetFromMatrix(countData = expression_matrix, 
+  deseqdataset <- DESeqDataSetFromMatrix(countData = filtered_expression_counts, 
                                          colData = meta_data, 
                                          design = ~ condition)
   
@@ -73,22 +86,6 @@ deseqdataset <- function(){
 
 deseqdataset_object <- deseqdataset()
 deseqdataset_object
-```
-
-# Pre-filtering: removing rows with low gene counts
-## keep rows that have at least 10 reads total
-
-```{r}
-
-pre_filter <- function(){
-  keep <- rowSums(counts(deseqdataset_object)) >= 10
-  deseqdataset <- deseqdataset_object[keep,]
-  return (deseqdataset)
-}
-
-filtered_expression_counts <- pre_filter()
-head(filtered_expression_counts)
-
 ```
 
 # Differential expression analysis
@@ -112,7 +109,6 @@ df_deseq_result <- as.data.frame(deseq_result)
 
 # Extract differentially expressed genes that have padj <= 0.01 
 ```{r}
-
 sig_genes <- function(){
 significant_genes <- df_deseq_result[df_deseq_result$padj <= 0.01,] %>% na.omit(significant_genes)
 ordered_sig_genes <- significant_genes[order(significant_genes$padj, decreasing = FALSE), ]
@@ -179,6 +175,18 @@ up_entrez_ids <- upregulated_sig_genes$ENTREZID
 head(up_entrez_ids)
 ```
 
+# Write up-regulated significant genes into CSV file
+
+```{r}
+write_up_sig_genes <- function(out_path){
+  write.csv(upregulated_sig_genes, file = out_path )
+}
+
+write_up_sig_genes("../Enrichment analysis for breast cancer/outputs/up-regulated_significant_genes.csv")
+
+```
+
+
 # Down-regulated significant genes
 ```{r}
 down_sig_genes <- function(){
@@ -194,6 +202,17 @@ head(downregulated_sig_genes,5)
 ```{r}
 down_entrez_ids <- downregulated_sig_genes$ENTREZID
 head(down_entrez_ids)
+```
+
+# Write down-regulated significant genes into CSV file
+
+```{r}
+write_down_sig_genes <- function(out_path){
+  write.csv(downregulated_sig_genes, file = out_path )
+}
+
+write_down_sig_genes("../Enrichment analysis for breast cancer/outputs/down-regulated_significant_genes.csv")
+
 ```
 
 # Gene Ontology
@@ -315,10 +334,7 @@ p <- ggplot(df_go_group_down_top7, aes(x = reorder(Description, - Count),
   dev.off()
 
 }
-
 bar_plot_down()
-
-
 ```
 
 
@@ -492,7 +508,6 @@ bar_plot_enriched_down<- function(){
 }
 
 bar_plot_enriched_down()
-
 ```
 
 ## Dotplot of down-regulated BP enriched GO terms
@@ -579,7 +594,7 @@ bar_plot_kegg_enriched_up<- function(){
          geom_bar(stat = "identity", width = 0.8) +
          coord_flip() +
          scale_fill_gradientn(name = "p.adjust", colors = jama_colors) +
-         labs(title = "Bar plot of Enriched KEGG pathway of up-regulated Genes",
+         labs(title = "Bar plot of Enriched KEGG pathway among up-regulated Genes",
              x = "Enriched pathway",
              y = "Gene Count") +
          theme_bw() +
@@ -598,7 +613,6 @@ bar_plot_kegg_enriched_up()
 
 ## Dotplot for KEGG enriched up-regulated significant gene 
 ```{r}
-
 dot_plot_kegg_enriched_up<- function(){
   
   jama_colors <- pal_jama("default")(7)
@@ -608,7 +622,7 @@ dot_plot_kegg_enriched_up<- function(){
         coord_flip() +
         scale_size_continuous(range = c(3, 8), name = "Gene Count") +
         scale_color_gradientn(name = "p.adjust", colors = jama_colors) +
-        labs(title = "Dot plot of BP of enriched up-regulated genes",
+        labs(title = "Dot plot of Enriched KEGG pathway among up-regulated genes",
              x = "GO Term",
              y = "Gene Count") +
         theme_bw() +
@@ -622,22 +636,18 @@ dot_plot_kegg_enriched_up<- function(){
 }
 
 dot_plot_kegg_enriched_up()
-
 ```
 
 
 # Visualize the top enriched pathway that have smallest qval
 ```{r message=FALSE , results='hide'}
-
 visualize_top_path_up <- function(){
   pathview(gene.data = up_entrez_ids, 
            pathway.id = "hsa04110", 
            species = "hsa",
            kegg.dir = "../Enrichment analysis for breast cancer/outputs/")
 }
-
 visualize_top_path_up()
-
 ```
 
 ## Browse the top enriched pathway for up-regulated sig genes
@@ -735,14 +745,11 @@ dot_plot_kegg_enriched_down <- function(){
   print(p)
   dev.off()
 }
-
 dot_plot_kegg_enriched_down()
-
 ```
 
 
 # Visualize the top enriched pathway that have smallest qval
-
 ```{r message=FALSE , results='hide'}
 
 visualize_top_path_down <- function(){
@@ -777,8 +784,6 @@ reactome_up_genes <- function(){
 
 reactome_enriched_path_up <- reactome_up_genes()
 head(reactome_enriched_path_up)
-
-
 ```
 
 ## DataFrame of Reactome enriched pathways of up-regulated significant genes
@@ -871,7 +876,7 @@ visualize_reactome_path_up()
 ```
  
  
-## Reactome pathway enrichment analysis for down-regulated significant genes
+## Reactome pathway enrichment analysis among down-regulated significant genes
 ```{r}
 reactome_down_genes <- function(){
   reactome_enrichment <- enrichPathway(gene = down_entrez_ids,
@@ -890,7 +895,7 @@ head(reactome_enriched_path_down)
 
 ```
 
-## DataFrame of Reactome enriched pathways of down-regulated significant genes
+## DataFrame of Reactome enriched pathways among down-regulated significant genes
 ```{r}
 dataframe_reactome_down <- function(){
   df_reactome_down_genes <- as.data.frame(reactome_enriched_path_down)
@@ -931,10 +936,7 @@ bar_plot_reactome_enriched_down<- function(){
   dev.off()
   
 }
-
 bar_plot_reactome_enriched_down()
-
-
 ```
 
 ## Dotplot for Reactome enriched downregulated significant gene 
@@ -960,10 +962,7 @@ width = 700, height = 800)
 print(p)
 dev.off()
 }
-
 dot_plot_reactome_enriched_down()
-
-
 ```
 
 
