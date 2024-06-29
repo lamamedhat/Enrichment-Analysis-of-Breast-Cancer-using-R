@@ -13,6 +13,6 @@ renv::restore()
 [metadata](https://raw.githubusercontent.com/lamamedhat/Enrichment-Analysis-of-Breast-Cancer-using-R/main/Data/metadata.csv)
 
 # Sample Output
-[Enrichment_Analysis_pipeline_PDF]()
+[Enrichment_Analysis_pipeline_PDF](https://github.com/lamamedhat/Enrichment-Analysis-of-Breast-Cancer-using-R/blob/main/outputs/Enrichment_analysis.pdf)
 
 [Enrichment_Analysis_Figures_PDF](https://github.com/lamamedhat/Enrichment-Analysis-of-Breast-Cancer-using-R/blob/main/outputs/Enrichment%20Analysis%20Figures%20of%20Breast%20Cancer.pdf)
